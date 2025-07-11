@@ -1,13 +1,14 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import type { ImageFile } from "../App";
 import { EditModal } from "./EditModal";
 
 interface ImagesProps {
   images: ImageFile[];
   onDelete: (id: number) => void;
+  onImageUpdate?: (id: number, updates: Partial<ImageFile>) => void;
 }
 
-export function Images({ images, onDelete }: ImagesProps) {
+export function Images({ images, onDelete, onImageUpdate }: ImagesProps) {
   return (
     <div>
       <h2 className="hidden text-gray-800 text-xl font-semibold mb-4">Images: {images.length}</h2>
@@ -52,8 +53,15 @@ function ImageSpot({ image, onDelete }: ImageSpotProps) {
   const processedURL = image.processedFile ? URL.createObjectURL(image.processedFile) : "";
   const isProcessing = !image.processedFile;
 
-  const handleEditSave = (editedImageUrl: string) => {
+  const handleEditSave = (editedImageUrl: string, preset?: string, format?: 'png' | 'jpeg') => {
     setProcessedImageUrl(editedImageUrl);
+    // Update the image with preset information
+    if (onImageUpdate && (preset || format)) {
+      onImageUpdate(image.id, { 
+        lastPreset: preset,
+        lastFormat: format 
+      });
+    }
   };
 
   const transparentBg = `url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAGUExURb+/v////5nD/3QAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAUSURBVBjTYwABQSCglEENMxgYGAAynwRB8BEAgQAAAABJRU5ErkJggg==")`;
@@ -117,7 +125,9 @@ function ImageSpot({ image, onDelete }: ImageSpotProps) {
             </button>
             <a
               href={processedImageUrl || processedURL}
-              download={`processed-${image.id}.png`}
+              download={`${image.lastPreset && image.lastPreset !== 'none' 
+                ? image.lastPreset.toLowerCase().replace(/\s+/g, '-') 
+                : 'processed'}-${image.id}.${image.lastFormat === 'jpeg' ? 'jpg' : 'png'}`}
               className="flex items-center gap-1 px-3 py-1.5 bg-white border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
               title="Download"
             >
@@ -127,6 +137,12 @@ function ImageSpot({ image, onDelete }: ImageSpotProps) {
               <span className="text-sm text-gray-700">Download</span>
             </a>
           </div>
+        </div>
+      )}
+
+      {image.lastPreset && image.lastPreset !== 'none' && (
+        <div className="px-3 py-1 text-xs bg-blue-100 text-blue-700 border-t">
+          <span className="font-medium">{image.lastPreset}</span> • {image.lastFormat?.toUpperCase()}
         </div>
       )}
 

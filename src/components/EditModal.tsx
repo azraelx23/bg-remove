@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import type { ImageFile } from "../App";
 
 interface EditModalProps {
   image: ImageFile;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (url: string) => void;
+  onSave: (url: string, preset?: string, format?: 'png' | 'jpeg') => void;
 }
 
 const backgroundOptions = [
@@ -32,6 +32,64 @@ const predefinedPatterns = [
   { id: 'waves', label: 'Waves' }
 ];
 
+// Photo format presets
+interface PhotoPreset {
+  id: string;
+  label: string;
+  width: number;
+  height: number;
+  minHeadWidth: number;
+  maxHeadWidth: number;
+  format: 'png' | 'jpeg';
+  maxFileSize?: number; // in KB
+  description: string;
+}
+
+const photoPresets: PhotoPreset[] = [
+  {
+    id: 'none',
+    label: 'No Preset',
+    width: 0,
+    height: 0,
+    minHeadWidth: 0,
+    maxHeadWidth: 0,
+    format: 'png',
+    description: 'Keep original dimensions'
+  },
+  {
+    id: 'china-visa',
+    label: 'China Visa',
+    width: 420,
+    height: 560,
+    minHeadWidth: 191,
+    maxHeadWidth: 251,
+    format: 'jpeg',
+    maxFileSize: 120,
+    description: '420×560px, JPEG, 40-120KB, head 191-251px wide'
+  },
+  {
+    id: 'us-passport',
+    label: 'US Passport',
+    width: 600,
+    height: 600,
+    minHeadWidth: 330,
+    maxHeadWidth: 420,
+    format: 'jpeg',
+    maxFileSize: 240,
+    description: '600×600px, JPEG, head 330-420px wide'
+  },
+  {
+    id: 'linkedin',
+    label: 'LinkedIn Profile',
+    width: 400,
+    height: 400,
+    minHeadWidth: 200,
+    maxHeadWidth: 320,
+    format: 'jpeg',
+    description: '400×400px, square format for social media'
+  }
+];
+
 export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
   const [bgType, setBgType] = useState('color');
   const [bgColor, setBgColor] = useState('#ffffff');
@@ -42,6 +100,8 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
   const [contrastValue, setContrastValue] = useState(50);
   const [exportUrl, setExportUrl] = useState('');
   const [showCustomColorPicker, setShowCustomColorPicker] = useState(false);
+  const [selectedPreset, setSelectedPreset] = useState('none');
+  const [cropArea, setCropArea] = useState<{x: number, y: number, width: number, height: number} | null>(null);
 
   const processedURL = image.processedFile ? URL.createObjectURL(image.processedFile) : '';
 
@@ -49,7 +109,103 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
     if (image.processedFile) {
       applyChanges();
     }
-  }, [bgType, bgColor, customBgImage, selectedEffect, blurValue, brightnessValue, contrastValue]);
+  }, [bgType, bgColor, customBgImage, selectedEffect, blurValue, brightnessValue, contrastValue, selectedPreset, cropArea]);
+
+  // Face detection helper
+  const detectFace = async (img: HTMLImageElement): Promise<{x: number, y: number, width: number, height: number} | null> => {
+    try {
+      // Check if FaceDetector is available
+      if ('FaceDetector' in window) {
+        const faceDetector = new (window as any).FaceDetector();
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        
+        const faces = await faceDetector.detect(canvas);
+        if (faces && faces.length > 0) {
+          const face = faces[0]; // Use the first detected face
+          return {
+            x: face.boundingBox.x,
+            y: face.boundingBox.y,
+            width: face.boundingBox.width,
+            height: face.boundingBox.height
+          };
+        }
+      }
+    } catch (error) {
+      console.warn('Face detection not available or failed:', error);
+    }
+    return null;
+  };
+
+  // Calculate optimal crop area for selected preset
+  const calculateCropArea = async (img: HTMLImageElement, preset: PhotoPreset) => {
+    if (preset.id === 'none') return null;
+    
+    const aspectRatio = preset.width / preset.height;
+    const imgAspectRatio = img.width / img.height;
+    
+    // Try face detection first
+    const face = await detectFace(img);
+    
+    let cropWidth: number, cropHeight: number, cropX: number, cropY: number;
+    
+    if (imgAspectRatio > aspectRatio) {
+      // Image is wider than target aspect ratio
+      cropHeight = img.height;
+      cropWidth = cropHeight * aspectRatio;
+      
+      if (face) {
+        // Position crop to center the face horizontally
+        const faceCenterX = face.x + face.width / 2;
+        cropX = Math.max(0, Math.min(img.width - cropWidth, faceCenterX - cropWidth / 2));
+      } else {
+        cropX = (img.width - cropWidth) / 2;
+      }
+      cropY = 0;
+    } else {
+      // Image is taller than target aspect ratio
+      cropWidth = img.width;
+      cropHeight = cropWidth / aspectRatio;
+      cropX = 0;
+      
+      if (face) {
+        // Position crop to place face in upper third (ideal for passport photos)
+        const faceCenterY = face.y + face.height / 2;
+        const idealFacePosition = cropHeight * 0.4; // Face at 40% from top
+        cropY = Math.max(0, Math.min(img.height - cropHeight, faceCenterY - idealFacePosition));
+      } else {
+        cropY = (img.height - cropHeight) / 2;
+      }
+    }
+    
+    return {
+      x: cropX,
+      y: cropY,
+      width: cropWidth,
+      height: cropHeight
+    };
+  };
+
+  const handlePresetChange = async (presetId: string) => {
+    setSelectedPreset(presetId);
+    const preset = photoPresets.find(p => p.id === presetId);
+    
+    if (preset && preset.id !== 'none' && image.processedFile) {
+      const img = new Image();
+      img.src = processedURL;
+      await new Promise(resolve => img.onload = resolve);
+      
+      const cropArea = await calculateCropArea(img, preset);
+      setCropArea(cropArea);
+    } else {
+      setCropArea(null);
+    }
+  };
 
   const getCurrentEffectValue = () => {
     switch (selectedEffect) {
@@ -89,8 +245,16 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
     img.src = processedURL;
     await new Promise(resolve => img.onload = resolve);
     
-    canvas.width = img.width;
-    canvas.height = img.height;
+    const preset = photoPresets.find(p => p.id === selectedPreset);
+    
+    // Set canvas dimensions based on preset or original image
+    if (preset && preset.id !== 'none' && cropArea) {
+      canvas.width = preset.width;
+      canvas.height = preset.height;
+    } else {
+      canvas.width = img.width;
+      canvas.height = img.height;
+    }
     
     // Apply background
     if (bgType === 'color') {
@@ -103,8 +267,18 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
       ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
     }
     
-    // Draw the processed image
-    ctx.drawImage(img, 0, 0);
+    // Draw the processed image (cropped if preset is selected)
+    if (preset && preset.id !== 'none' && cropArea) {
+      // Draw cropped and scaled image
+      ctx.drawImage(
+        img,
+        cropArea.x, cropArea.y, cropArea.width, cropArea.height,
+        0, 0, canvas.width, canvas.height
+      );
+    } else {
+      // Draw original image
+      ctx.drawImage(img, 0, 0);
+    }
     
     // Apply effects
     if (selectedEffect !== 'none') {
@@ -154,12 +328,55 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
       }
     }
     
-    const dataUrl = canvas.toDataURL('image/png');
+    // Export with appropriate format and quality
+    let dataUrl: string;
+    if (preset && preset.format === 'jpeg') {
+      // For JPEG, use quality to meet file size requirements
+      let quality = 0.9;
+      dataUrl = canvas.toDataURL('image/jpeg', quality);
+      
+      // If there's a max file size requirement, adjust quality
+      if (preset.maxFileSize) {
+        const targetSize = preset.maxFileSize * 1024; // Convert KB to bytes
+        let attempts = 0;
+        
+        while (dataUrl.length * 0.75 > targetSize && quality > 0.1 && attempts < 10) {
+          quality -= 0.1;
+          dataUrl = canvas.toDataURL('image/jpeg', quality);
+          attempts++;
+        }
+      }
+    } else {
+      dataUrl = canvas.toDataURL('image/png');
+    }
+    
     setExportUrl(dataUrl);
   };
 
+  const handleDownload = () => {
+    // Create download with proper format and filename
+    const preset = photoPresets.find(p => p.id === selectedPreset);
+    const fileExtension = preset && preset.format === 'jpeg' ? 'jpg' : 'png';
+    const filename = preset && preset.id !== 'none' 
+      ? `${preset.label.toLowerCase().replace(/\s+/g, '-')}-${image.id}.${fileExtension}`
+      : `processed-${image.id}.${fileExtension}`;
+    
+    // Create download link
+    const link = document.createElement('a');
+    link.href = exportUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleSave = () => {
-    onSave(exportUrl);
+    // Get current preset info
+    const preset = photoPresets.find(p => p.id === selectedPreset);
+    const format = preset?.format || 'png';
+    
+    // Update the parent with the new image URL and preset info
+    onSave(exportUrl, selectedPreset, format);
     onClose();
   };
 
@@ -181,17 +398,40 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-4">
             <div>
+              <h3 className="font-medium text-gray-700 mb-2">Photo Format</h3>
+              <select
+                value={selectedPreset}
+                onChange={(e) => handlePresetChange(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                aria-label="Select photo format preset"
+              >
+                {photoPresets.map(preset => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              {selectedPreset !== 'none' && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {photoPresets.find(p => p.id === selectedPreset)?.description}
+                </p>
+              )}
+            </div>
+
+            <div>
               <h3 className="font-medium text-gray-700 mb-2">Background</h3>
               <div className="flex gap-2 mb-4">
                 {backgroundOptions.map(option => (
                   <button
                     key={option.id}
+                    type="button"
                     onClick={() => setBgType(option.id)}
                     className={`px-3 py-1 rounded ${
                       bgType === option.id
                         ? 'bg-blue-500 text-white'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
+                    aria-label={`Select ${option.label} background type`}
                   >
                     {option.label}
                   </button>
@@ -204,14 +444,18 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
                     {predefinedColors.map(color => (
                       <button
                         key={color}
+                        type="button"
                         onClick={() => setBgColor(color)}
                         className="w-8 h-8 rounded-full border border-gray-300"
                         style={{ backgroundColor: color }}
+                        aria-label={`Select ${color} background color`}
+                        title={`Background color: ${color}`}
                       />
                     ))}
                   </div>
                   <div className="flex items-center gap-2 mt-3">
                     <button
+                      type="button"
                       onClick={() => setShowCustomColorPicker(!showCustomColorPicker)}
                       className="px-3 py-1.5 bg-white border border-gray-200 rounded-md hover:bg-gray-50 transition-colors text-sm text-gray-700"
                     >
@@ -223,6 +467,7 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
                         value={bgColor}
                         onChange={(e) => setBgColor(e.target.value)}
                         className="w-8 h-8 border border-gray-400 rounded-md hover:bg-blue-200"
+                        aria-label="Custom background color picker"
                       />
                     )}
                   </div>
@@ -235,6 +480,7 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
                   accept="image/*"
                   onChange={(e) => setCustomBgImage(e.target.files?.[0] || null)}
                   className="w-full"
+                  aria-label="Select background image file"
                 />
               )}
             </div>
@@ -245,12 +491,14 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
                 {effectOptions.map(option => (
                   <button
                     key={option.id}
+                    type="button"
                     onClick={() => setSelectedEffect(option.id)}
                     className={`px-3 py-1 rounded ${
                       selectedEffect === option.id
                         ? 'bg-blue-500 text-white'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
+                    aria-label={`Apply ${option.label} effect`}
                   >
                     {option.label}
                   </button>
@@ -266,6 +514,7 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
                     value={getCurrentEffectValue()}
                     onChange={(e) => handleEffectValueChange(Number(e.target.value))}
                     className="w-full"
+                    aria-label={`${selectedEffect} effect intensity`}
                   />
                   <div className="flex justify-between text-sm text-gray-500">
                     <span>0</span>
@@ -279,29 +528,49 @@ export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
 
           <div>
             <h3 className="font-medium text-gray-700 mb-2">Preview</h3>
-            <div className="border rounded-lg overflow-hidden">
+            <div className="border rounded-lg overflow-hidden relative">
               <img
                 src={exportUrl || processedURL}
                 alt="Preview"
                 className="w-full object-contain"
               />
             </div>
+            {selectedPreset !== 'none' && (
+              <div className="mt-2 text-xs text-gray-600">
+                {photoPresets.find(p => p.id === selectedPreset)?.width} × {photoPresets.find(p => p.id === selectedPreset)?.height} pixels
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="mt-6 flex justify-between items-center">
           <button
-            onClick={onClose}
-            className="px-4 py-2 text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
+            type="button"
+            onClick={handleDownload}
+            className="flex items-center gap-2 px-4 py-2 text-white bg-green-500 rounded hover:bg-green-600"
+            disabled={!exportUrl}
           >
-            Cancel
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Download
           </button>
-          <button
-            onClick={handleSave}
-            className="px-4 py-2 text-white bg-blue-500 rounded hover:bg-blue-600"
-          >
-            Save Changes
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="px-4 py-2 text-white bg-blue-500 rounded hover:bg-blue-600"
+            >
+              Save Changes
+            </button>
+          </div>
         </div>
       </div>
     </div>

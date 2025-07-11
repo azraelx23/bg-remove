@@ -11,6 +11,8 @@ export interface ImageFile {
   id: number;
   file: File;
   processedFile?: File;
+  lastPreset?: string;
+  lastFormat?: 'png' | 'jpeg';
 }
 
 // Sample images from Unsplash
@@ -298,7 +300,13 @@ export default function App() {
               </div>
             )}
 
-            <Images images={images} onDelete={(id) => setImages(prev => prev.filter(img => img.id !== id))} />
+            <Images 
+              images={images} 
+              onDelete={(id) => setImages(prev => prev.filter(img => img.id !== id))}
+              onImageUpdate={(id, updates) => setImages(prev => prev.map(img => 
+                img.id === id ? { ...img, ...updates } : img
+              ))}
+            />
           </div>
         </div>
       </main>
