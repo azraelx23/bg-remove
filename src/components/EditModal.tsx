@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { ImageFile } from "../App";
+import photoPresetsConfig from '../config/photoPresets.json';
 
 interface EditModalProps {
   image: ImageFile;
@@ -32,7 +33,7 @@ const predefinedPatterns = [
   { id: 'waves', label: 'Waves' }
 ];
 
-// Photo format presets
+// Photo format presets interface
 interface PhotoPreset {
   id: string;
   label: string;
@@ -45,50 +46,8 @@ interface PhotoPreset {
   description: string;
 }
 
-const photoPresets: PhotoPreset[] = [
-  {
-    id: 'none',
-    label: 'No Preset',
-    width: 0,
-    height: 0,
-    minHeadWidth: 0,
-    maxHeadWidth: 0,
-    format: 'png',
-    description: 'Keep original dimensions'
-  },
-  {
-    id: 'china-visa',
-    label: 'China Visa',
-    width: 420,
-    height: 560,
-    minHeadWidth: 191,
-    maxHeadWidth: 251,
-    format: 'jpeg',
-    maxFileSize: 120,
-    description: '420×560px, JPEG, 40-120KB, head 191-251px wide'
-  },
-  {
-    id: 'us-passport',
-    label: 'US Passport',
-    width: 600,
-    height: 600,
-    minHeadWidth: 330,
-    maxHeadWidth: 420,
-    format: 'jpeg',
-    maxFileSize: 240,
-    description: '600×600px, JPEG, head 330-420px wide'
-  },
-  {
-    id: 'linkedin',
-    label: 'LinkedIn Profile',
-    width: 400,
-    height: 400,
-    minHeadWidth: 200,
-    maxHeadWidth: 320,
-    format: 'jpeg',
-    description: '400×400px, square format for social media'
-  }
-];
+// Load presets from JSON configuration
+const photoPresets: PhotoPreset[] = photoPresetsConfig.presets;
 
 export function EditModal({ image, isOpen, onClose, onSave }: EditModalProps) {
   const [bgType, setBgType] = useState('color');

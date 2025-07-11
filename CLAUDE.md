@@ -33,7 +33,9 @@ The application implements a dual-model approach:
 - **Model Loading**: Deferred initialization - models are only loaded when first image is uploaded
 - **WebGPU Detection**: Dynamic capability detection with graceful fallback to WebAssembly
 - **Image Processing**: Uses Canvas API for alpha channel manipulation and background replacement
-- **File Handling**: Supports drag-and-drop, paste, and sample image selection
+- **File Handling**: Supports drag-and-drop, paste, camera capture, and sample image selection
+- **Camera Integration**: Direct photo capture using device camera with getUserMedia API
+- **Photo Presets**: Multiple visa/passport formats (China, Japan, Korea, US) with automatic sizing and file optimization
 - **Local Processing**: All processing happens client-side, no server uploads
 
 ### State Management

@@ -1,7 +1,8 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useDropzone } from "react-dropzone";
 import { Images } from "./components/Images";
 import { SettingsModal } from "./components/SettingsModal";
+import { CameraPreview } from "./components/CameraPreview";
 import { processImages, initializeModel, getModelInfo } from "../lib/process";
 import imageStorage, { StoredImage } from "./lib/database";
 
@@ -34,6 +35,14 @@ const isMobileSafari = () => {
   return iOSSafari && 'ontouchend' in document;
 };
 
+// Check if the user is on a mobile device
+const isMobileDevice = () => {
+  const ua = window.navigator.userAgent;
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+  const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  return isMobile || (isTouchDevice && window.innerWidth <= 768);
+};
+
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
@@ -43,6 +52,10 @@ export default function App() {
   const [isModelSwitching, setIsModelSwitching] = useState(false);
   const [images, setImages] = useState<ImageFile[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [isCameraSupported, setIsCameraSupported] = useState(false);
+  const [showCameraPreview, setShowCameraPreview] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Convert StoredImage to ImageFile
   const storedImageToImageFile = (storedImage: StoredImage): ImageFile => {
@@ -80,6 +93,9 @@ export default function App() {
       return;
     }
 
+    // Check if on mobile device
+    setIsMobile(isMobileDevice());
+
     // Only check iOS on load since that won't change
     const { isIOS: isIOSDevice } = getModelInfo();
     setIsIOS(isIOSDevice);
@@ -87,6 +103,11 @@ export default function App() {
 
     // Load stored images
     loadStoredImages();
+
+    // Check camera support
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      setIsCameraSupported(true);
+    }
   }, []);
 
   const handleModelChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -112,8 +133,98 @@ export default function App() {
     }
   };
 
+  // Camera capture function - mobile vs desktop
+  const handleCameraCapture = () => {
+    if (isMobile) {
+      // On mobile, trigger the hidden camera input to open native camera app
+      const cameraInput = document.getElementById('mobile-camera-input') as HTMLInputElement;
+      if (cameraInput) {
+        cameraInput.click();
+      }
+    } else {
+      // On desktop, show camera preview modal
+      setShowCameraPreview(true);
+    }
+  };
+
+  // Handle photo capture from camera preview (desktop)
+  const handlePhotoCapture = (file: File) => {
+    setShowCameraPreview(false);
+    onDrop([file]);
+  };
+
+  // Handle mobile camera input change
+  const handleMobileCameraChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      onDrop(Array.from(files));
+    }
+    // Reset the input so the same image can be selected again
+    event.target.value = '';
+  };
+
+  // Resize image to optimize ML processing performance
+  const resizeImageForProcessing = async (file: File, maxHeight: number = 512): Promise<File> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        // Calculate new dimensions maintaining aspect ratio
+        const aspectRatio = img.width / img.height;
+        let newWidth: number, newHeight: number;
+        
+        if (img.height > maxHeight) {
+          newHeight = maxHeight;
+          newWidth = Math.round(maxHeight * aspectRatio);
+        } else {
+          // If image is already smaller, keep original size
+          newWidth = img.width;
+          newHeight = img.height;
+        }
+        
+        // Create canvas for resizing
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) {
+          resolve(file); // Return original if canvas fails
+          return;
+        }
+        
+        canvas.width = newWidth;
+        canvas.height = newHeight;
+        
+        // Draw resized image
+        ctx.drawImage(img, 0, 0, newWidth, newHeight);
+        
+        // Convert back to file
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const resizedFile = new File([blob], file.name, {
+              type: file.type,
+              lastModified: file.lastModified,
+            });
+            resolve(resizedFile);
+          } else {
+            resolve(file); // Return original if blob fails
+          }
+        }, file.type, 0.9);
+      };
+      
+      img.onerror = () => {
+        resolve(file); // Return original if image loading fails
+      };
+      
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    const newImages = acceptedFiles.map((file, index) => ({
+    // Resize images for better ML processing performance
+    const resizedFiles = await Promise.all(
+      acceptedFiles.map(file => resizeImageForProcessing(file))
+    );
+    
+    const newImages = resizedFiles.map((file, index) => ({
       id: Date.now() + index,
       file,
       processedFile: undefined
@@ -145,7 +256,7 @@ export default function App() {
     
     for (const image of newImages) {
       try {
-        // Save original image to database first
+        // Save resized image to database first
         const dbId = await imageStorage.saveImage(image.file);
         
         const result = await processImages([image.file]);
@@ -227,6 +338,7 @@ export default function App() {
                     onChange={handleModelChange}
                     className="bg-white border border-gray-300 rounded-md px-3 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     disabled={!isWebGPU}
+                    aria-label="Select AI model for background removal"
                   >
                     <option value="briaai/RMBG-1.4">RMBG-1.4 (Cross-browser)</option>
                     {isWebGPU && (
@@ -290,7 +402,7 @@ export default function App() {
                 ${isLoading || isModelSwitching ? "cursor-not-allowed" : ""}
               `}
             >
-              <input {...getInputProps()} className="hidden" disabled={isLoading || isModelSwitching} />
+              <input {...getInputProps()} ref={fileInputRef} className="hidden" disabled={isLoading || isModelSwitching} />
               <div className="flex flex-col items-center gap-2">
                 {isLoading || isModelSwitching ? (
                   <>
@@ -307,6 +419,7 @@ export default function App() {
                     <p className="text-lg text-red-600 font-medium mb-2">{error.message}</p>
                     {currentModel === 'Xenova/modnet' && (
                       <button
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleModelChange({ target: { value: 'briaai/RMBG-1.4' }} as any);
@@ -327,7 +440,40 @@ export default function App() {
                         ? "Drop the images here..."
                         : "Drag and drop images here"}
                     </p>
-                    <p className="text-sm text-gray-500">or click to select files</p>
+                    <p className="text-sm text-gray-500">or use the options below</p>
+                    
+                    <div className="mt-4 flex flex-col sm:flex-row gap-3 items-center">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          fileInputRef.current?.click();
+                        }}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Select Files
+                      </button>
+                      
+                      {isCameraSupported && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCameraCapture();
+                          }}
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          Take Photo
+                        </button>
+                      )}
+                    </div>
                   </>
                 )}
               </div>
@@ -340,6 +486,7 @@ export default function App() {
                   {sampleImages.map((url, index) => (
                     <button
                       key={index}
+                      type="button"
                       onClick={() => handleSampleImageClick(url)}
                       className="relative aspect-square overflow-hidden rounded-lg hover:opacity-90 transition-opacity focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
@@ -402,6 +549,27 @@ export default function App() {
           setShowSettings(false);
         }}
       />
+
+      {/* Camera Preview Modal - Desktop only */}
+      {!isMobile && (
+        <CameraPreview
+          isOpen={showCameraPreview}
+          onClose={() => setShowCameraPreview(false)}
+          onCapture={handlePhotoCapture}
+        />
+      )}
+
+      {/* Hidden Mobile Camera Input */}
+      {isMobile && (
+        <input
+          id="mobile-camera-input"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleMobileCameraChange}
+          className="hidden"
+        />
+      )}
     </div>
   );
 }

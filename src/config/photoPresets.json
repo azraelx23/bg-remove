@@ -1,0 +1,68 @@
+{
+  "presets": [
+    {
+      "id": "none",
+      "label": "No Preset",
+      "width": 0,
+      "height": 0,
+      "minHeadWidth": 0,
+      "maxHeadWidth": 0,
+      "format": "png",
+      "description": "Keep original dimensions"
+    },
+    {
+      "id": "china-visa",
+      "label": "China Visa",
+      "width": 420,
+      "height": 560,
+      "minHeadWidth": 191,
+      "maxHeadWidth": 251,
+      "format": "jpeg",
+      "maxFileSize": 120,
+      "description": "420×560px, JPEG, 40-120KB, head 191-251px wide"
+    },
+    {
+      "id": "us-passport",
+      "label": "US Passport",
+      "width": 600,
+      "height": 600,
+      "minHeadWidth": 330,
+      "maxHeadWidth": 420,
+      "format": "jpeg",
+      "maxFileSize": 240,
+      "description": "600×600px, JPEG, head 330-420px wide"
+    },
+    {
+      "id": "linkedin",
+      "label": "LinkedIn Profile",
+      "width": 400,
+      "height": 400,
+      "minHeadWidth": 200,
+      "maxHeadWidth": 320,
+      "format": "jpeg",
+      "description": "400×400px, square format for social media"
+    },
+    {
+      "id": "japan-visa",
+      "label": "Japan Visa",
+      "width": 354,
+      "height": 354,
+      "minHeadWidth": 252,
+      "maxHeadWidth": 283,
+      "format": "jpeg",
+      "maxFileSize": 120,
+      "description": "45×45mm, JPEG, head 32-36mm, white background"
+    },
+    {
+      "id": "korea-visa",
+      "label": "Korea Visa",
+      "width": 276,
+      "height": 354,
+      "minHeadWidth": 197,
+      "maxHeadWidth": 276,
+      "format": "jpeg",
+      "maxFileSize": 100,
+      "description": "35×45mm, JPEG, face 70-80% of frame, <100KB"
+    }
+  ]
+}
