@@ -42,10 +42,18 @@ The application implements a dual-model approach:
 - UI state (images, processing status, errors) managed in React components
 - Dynamic model switching supported for WebGPU-capable browsers
 
+### Local Storage System
+
+- **Database**: Uses Dexie (IndexedDB) to persist images locally between sessions
+- **Auto-save**: Images are automatically saved after processing with preset information
+- **Cache Management**: Settings modal provides cache clearing with confirmation dialog
+- **Storage Info**: Displays storage usage and image count
+- **Cleanup**: Option to remove images older than 30 days
+
 ### Dependencies of Note
 
 - `@huggingface/transformers` - Core ML inference library
-- `dexie` + `dexie-react-hooks` - IndexedDB management for local file caching
+- `dexie` + `dexie-react-hooks` - IndexedDB management for local file storage and caching
 - `react-dropzone` - File upload handling
 - `file-saver` - Download functionality
 

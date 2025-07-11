@@ -1,7 +1,9 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { Images } from "./components/Images";
+import { SettingsModal } from "./components/SettingsModal";
 import { processImages, initializeModel, getModelInfo } from "../lib/process";
+import imageStorage, { StoredImage } from "./lib/database";
 
 interface AppError {
   message: string;
@@ -40,6 +42,37 @@ export default function App() {
   const [currentModel, setCurrentModel] = useState<'briaai/RMBG-1.4' | 'Xenova/modnet'>('briaai/RMBG-1.4');
   const [isModelSwitching, setIsModelSwitching] = useState(false);
   const [images, setImages] = useState<ImageFile[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Convert StoredImage to ImageFile
+  const storedImageToImageFile = (storedImage: StoredImage): ImageFile => {
+    return {
+      id: storedImage.id!,
+      file: new File([storedImage.originalFile], storedImage.fileName, {
+        type: storedImage.originalFile.type,
+        lastModified: storedImage.createdAt.getTime()
+      }),
+      processedFile: storedImage.processedFile 
+        ? new File([storedImage.processedFile], storedImage.fileName, {
+            type: storedImage.processedFile.type,
+            lastModified: storedImage.updatedAt.getTime()
+          })
+        : undefined,
+      lastPreset: storedImage.lastPreset,
+      lastFormat: storedImage.lastFormat
+    };
+  };
+
+  // Load stored images on mount
+  const loadStoredImages = async () => {
+    try {
+      const storedImages = await imageStorage.getImages();
+      const imageFiles = storedImages.map(storedImageToImageFile);
+      setImages(imageFiles);
+    } catch (error) {
+      console.error('Failed to load stored images:', error);
+    }
+  };
 
   useEffect(() => {
     if (isMobileSafari()) {
@@ -51,6 +84,9 @@ export default function App() {
     const { isIOS: isIOSDevice } = getModelInfo();
     setIsIOS(isIOSDevice);
     setIsLoading(false);
+
+    // Load stored images
+    loadStoredImages();
   }, []);
 
   const handleModelChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -109,13 +145,21 @@ export default function App() {
     
     for (const image of newImages) {
       try {
+        // Save original image to database first
+        const dbId = await imageStorage.saveImage(image.file);
+        
         const result = await processImages([image.file]);
         if (result && result.length > 0) {
+          // Update with processed file
+          const updatedImage = { ...image, processedFile: result[0] };
           setImages(prev => prev.map(img =>
             img.id === image.id
-              ? { ...img, processedFile: result[0] }
+              ? updatedImage
               : img
           ));
+          
+          // Save processed image to database
+          await imageStorage.saveImage(image.file, result[0]);
         }
       } catch (error) {
         console.error('Error processing image:', error);
@@ -174,22 +218,35 @@ export default function App() {
             <h1 className="text-2xl font-bold text-gray-800">
               BG
             </h1>
-            {!isIOS && (
-              <div className="flex items-center gap-4">
-                <span className="text-gray-600">Model:</span>
-                <select
-                  value={currentModel}
-                  onChange={handleModelChange}
-                  className="bg-white border border-gray-300 rounded-md px-3 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  disabled={!isWebGPU}
-                >
-                  <option value="briaai/RMBG-1.4">RMBG-1.4 (Cross-browser)</option>
-                  {isWebGPU && (
-                    <option value="Xenova/modnet">MODNet (WebGPU)</option>
-                  )}
-                </select>
-              </div>
-            )}
+            <div className="flex items-center gap-4">
+              {!isIOS && (
+                <>
+                  <span className="text-gray-600">Model:</span>
+                  <select
+                    value={currentModel}
+                    onChange={handleModelChange}
+                    className="bg-white border border-gray-300 rounded-md px-3 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    disabled={!isWebGPU}
+                  >
+                    <option value="briaai/RMBG-1.4">RMBG-1.4 (Cross-browser)</option>
+                    {isWebGPU && (
+                      <option value="Xenova/modnet">MODNet (WebGPU)</option>
+                    )}
+                  </select>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowSettings(true)}
+                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md transition-colors"
+                title="Settings"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+            </div>
           </div>
           {isIOS && (
             <p className="text-sm text-gray-500 mt-2">
@@ -302,14 +359,49 @@ export default function App() {
 
             <Images 
               images={images} 
-              onDelete={(id) => setImages(prev => prev.filter(img => img.id !== id))}
-              onImageUpdate={(id, updates) => setImages(prev => prev.map(img => 
-                img.id === id ? { ...img, ...updates } : img
-              ))}
+              onDelete={async (id) => {
+                setImages(prev => prev.filter(img => img.id !== id));
+                
+                // Remove from database
+                try {
+                  await imageStorage.deleteImage(id);
+                } catch (error) {
+                  console.error('Failed to delete image from storage:', error);
+                }
+              }}
+              onImageUpdate={async (id, updates) => {
+                setImages(prev => prev.map(img => 
+                  img.id === id ? { ...img, ...updates } : img
+                ));
+                
+                // Save updates to database
+                try {
+                  const updatedImage = images.find(img => img.id === id);
+                  if (updatedImage) {
+                    await imageStorage.saveImage(
+                      updatedImage.file, 
+                      updatedImage.processedFile,
+                      updates.lastPreset || updatedImage.lastPreset,
+                      updates.lastFormat || updatedImage.lastFormat
+                    );
+                  }
+                } catch (error) {
+                  console.error('Failed to save image updates:', error);
+                }
+              }}
             />
           </div>
         </div>
       </main>
+
+      <SettingsModal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        onCacheCleared={() => {
+          setImages([]);
+          setShowSettings(false);
+        }}
+      />
     </div>
   );
 }
