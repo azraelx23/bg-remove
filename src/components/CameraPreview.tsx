@@ -60,7 +60,7 @@ export function CameraPreview({ isOpen, onClose, onCapture }: CameraPreviewProps
     }
   };
 
-  const handleCapture = () => {
+  const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
@@ -69,21 +69,37 @@ export function CameraPreview({ isOpen, onClose, onCapture }: CameraPreviewProps
     
     if (!ctx) return;
 
-    // Set canvas dimensions to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    
-    // Draw current video frame to canvas
-    ctx.drawImage(video, 0, 0);
-    
-    // Convert to blob and create file
-    canvas.toBlob((blob) => {
-      if (blob) {
-        const fileName = `camera-capture-${Date.now()}.jpg`;
-        const file = new File([blob], fileName, { type: 'image/jpeg' });
-        onCapture(file);
-      }
-    }, 'image/jpeg', 0.9);
+    try {
+      // Set canvas dimensions to match video
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      
+      // Draw current video frame to canvas
+      ctx.drawImage(video, 0, 0);
+      
+      // Convert to blob with timeout and error handling
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Camera capture timeout'));
+        }, 10000);
+        
+        canvas.toBlob((blob) => {
+          clearTimeout(timeout);
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Failed to create image from camera'));
+          }
+        }, 'image/jpeg', 0.9);
+      });
+      
+      const fileName = `camera-capture-${Date.now()}.jpg`;
+      const file = new File([blob], fileName, { type: 'image/jpeg' });
+      onCapture(file);
+    } catch (error) {
+      console.error('Camera capture failed:', error);
+      setError('Failed to capture photo. Please try again.');
+    }
   };
 
   const handleClose = () => {
