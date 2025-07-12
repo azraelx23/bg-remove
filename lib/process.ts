@@ -193,14 +193,30 @@ export async function processImage(image: File): Promise<File> {
     throw new Error("Model not initialized. Call initializeModel() first.");
   }
 
-  const img = await RawImage.fromURL(URL.createObjectURL(image));
+  const objectUrl = URL.createObjectURL(image);
   
   try {
+    // Add timeout to prevent infinite loading
+    const imageLoadPromise = RawImage.fromURL(objectUrl);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("Image loading timeout")), 30000)
+    );
+    
+    const img = await Promise.race([imageLoadPromise, timeoutPromise]) as RawImage;
+    
+    // Clean up object URL after loading
+    URL.revokeObjectURL(objectUrl);
+    
     // Pre-process image
     const { pixel_values } = await state.processor(img);
     
-    // Predict alpha matte
-    const { output } = await state.model({ input: pixel_values });
+    // Predict alpha matte with timeout
+    const modelPromise = state.model({ input: pixel_values });
+    const modelTimeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("Model processing timeout")), 60000)
+    );
+    
+    const { output } = await Promise.race([modelPromise, modelTimeoutPromise]) as any;
 
     // Resize mask back to original size
     const maskData = (
@@ -227,20 +243,30 @@ export async function processImage(image: File): Promise<File> {
     }
     ctx.putImageData(pixelData, 0, 0);
     
-    // Convert canvas to blob
-    const blob = await new Promise<Blob>((resolve, reject) => 
+    // Convert canvas to blob with timeout
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Canvas blob creation timeout")), 10000);
+      
       canvas.toBlob(
-        (blob) => blob ? resolve(blob) : reject(new Error("Failed to create blob")), 
+        (blob) => {
+          clearTimeout(timeout);
+          blob ? resolve(blob) : reject(new Error("Failed to create blob"));
+        }, 
         "image/png"
-      )
-    );
+      );
+    });
     
     const [fileName] = image.name.split(".");
     const processedFile = new File([blob], `${fileName}-bg-blasted.png`, { type: "image/png" });
     return processedFile;
   } catch (error) {
+    // Clean up object URL in case of error
+    try {
+      URL.revokeObjectURL(objectUrl);
+    } catch {}
+    
     console.error("Error processing image:", error);
-    throw new Error("Failed to process image");
+    throw new Error(`Failed to process image: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 

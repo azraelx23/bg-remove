@@ -167,114 +167,152 @@ export default function App() {
   const resizeImageForProcessing = async (file: File, maxHeight: number = 512): Promise<File> => {
     return new Promise((resolve) => {
       const img = new Image();
-      img.onload = () => {
-        // Calculate new dimensions maintaining aspect ratio
-        const aspectRatio = img.width / img.height;
-        let newWidth: number, newHeight: number;
-        
-        if (img.height > maxHeight) {
-          newHeight = maxHeight;
-          newWidth = Math.round(maxHeight * aspectRatio);
-        } else {
-          // If image is already smaller, keep original size
-          newWidth = img.width;
-          newHeight = img.height;
-        }
-        
-        // Create canvas for resizing
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        
-        if (!ctx) {
-          resolve(file); // Return original if canvas fails
-          return;
-        }
-        
-        canvas.width = newWidth;
-        canvas.height = newHeight;
-        
-        // Draw resized image
-        ctx.drawImage(img, 0, 0, newWidth, newHeight);
-        
-        // Convert back to file
-        canvas.toBlob((blob) => {
-          if (blob) {
-            const resizedFile = new File([blob], file.name, {
-              type: file.type,
-              lastModified: file.lastModified,
-            });
-            resolve(resizedFile);
-          } else {
-            resolve(file); // Return original if blob fails
-          }
-        }, file.type, 0.9);
+      const objectUrl = URL.createObjectURL(file);
+      
+      const cleanup = () => {
+        URL.revokeObjectURL(objectUrl);
       };
       
-      img.onerror = () => {
+      img.onload = () => {
+        try {
+          // Calculate new dimensions maintaining aspect ratio
+          const aspectRatio = img.width / img.height;
+          let newWidth: number, newHeight: number;
+          
+          if (img.height > maxHeight) {
+            newHeight = maxHeight;
+            newWidth = Math.round(maxHeight * aspectRatio);
+          } else {
+            // If image is already smaller, keep original size
+            newWidth = img.width;
+            newHeight = img.height;
+          }
+          
+          // Create canvas for resizing
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          
+          if (!ctx) {
+            cleanup();
+            resolve(file); // Return original if canvas fails
+            return;
+          }
+          
+          canvas.width = newWidth;
+          canvas.height = newHeight;
+          
+          // Draw resized image
+          ctx.drawImage(img, 0, 0, newWidth, newHeight);
+          
+          // Convert back to file
+          canvas.toBlob((blob) => {
+            cleanup();
+            if (blob) {
+              const resizedFile = new File([blob], file.name, {
+                type: file.type || 'image/jpeg',
+                lastModified: file.lastModified || Date.now(),
+              });
+              resolve(resizedFile);
+            } else {
+              console.error('Failed to create blob from canvas');
+              resolve(file); // Return original if blob fails
+            }
+          }, file.type || 'image/jpeg', 0.9);
+        } catch (error) {
+          console.error('Error during image resize:', error);
+          cleanup();
+          resolve(file);
+        }
+      };
+      
+      img.onerror = (error) => {
+        console.error('Failed to load image for resizing:', error);
+        cleanup();
         resolve(file); // Return original if image loading fails
       };
       
-      img.src = URL.createObjectURL(file);
+      img.src = objectUrl;
     });
   };
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    // Resize images for better ML processing performance
-    const resizedFiles = await Promise.all(
-      acceptedFiles.map(file => resizeImageForProcessing(file))
-    );
-    
-    const newImages = resizedFiles.map((file, index) => ({
-      id: Date.now() + index,
-      file,
-      processedFile: undefined
-    }));
-    setImages(prev => [...prev, ...newImages]);
-    
-    // Initialize model if this is the first image
-    if (images.length === 0) {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const initialized = await initializeModel();
-        if (!initialized) {
-          throw new Error("Failed to initialize background removal model");
+    try {
+      // Resize images for better ML processing performance
+      const resizedFiles = await Promise.all(
+        acceptedFiles.map(file => resizeImageForProcessing(file))
+      );
+      
+      const newImages = resizedFiles.map((file, index) => ({
+        id: Date.now() + index,
+        file,
+        processedFile: undefined
+      }));
+      setImages(prev => [...prev, ...newImages]);
+      
+      // Initialize model if this is the first image
+      if (images.length === 0) {
+        setIsLoading(true);
+        setError(null);
+        try {
+          const initialized = await initializeModel();
+          if (!initialized) {
+            throw new Error("Failed to initialize background removal model");
+          }
+          // Update WebGPU support status after model initialization
+          const { isWebGPUSupported } = getModelInfo();
+          setIsWebGPU(isWebGPUSupported);
+        } catch (err) {
+          setError({
+            message: err instanceof Error ? err.message : "An unknown error occurred"
+          });
+          setImages([]); // Clear the newly added images if model fails to load
+          setIsLoading(false);
+          return;
         }
-        // Update WebGPU support status after model initialization
-        const { isWebGPUSupported } = getModelInfo();
-        setIsWebGPU(isWebGPUSupported);
-      } catch (err) {
-        setError({
-          message: err instanceof Error ? err.message : "An unknown error occurred"
-        });
-        setImages([]); // Clear the newly added images if model fails to load
         setIsLoading(false);
-        return;
       }
-      setIsLoading(false);
-    }
-    
-    for (const image of newImages) {
-      try {
-        // Save resized image to database first
-        const dbId = await imageStorage.saveImage(image.file);
-        
-        const result = await processImages([image.file]);
-        if (result && result.length > 0) {
-          // Update with processed file
-          const updatedImage = { ...image, processedFile: result[0] };
+      
+      for (const image of newImages) {
+        try {
+          // Save resized image to database first
+          await imageStorage.saveImage(image.file);
+          
+          const result = await processImages([image.file]);
+          if (result && result.length > 0) {
+            // Update with processed file
+            const updatedImage = { ...image, processedFile: result[0] };
+            setImages(prev => prev.map(img =>
+              img.id === image.id
+                ? updatedImage
+                : img
+            ));
+            
+            // Save processed image to database
+            await imageStorage.saveImage(image.file, result[0]);
+          } else {
+            // Mark image as failed if no result returned
+            console.error('No result returned from processImages for:', image.file.name);
+            setImages(prev => prev.map(img =>
+              img.id === image.id
+                ? { ...img, processedFile: undefined }
+                : img
+            ));
+          }
+        } catch (error) {
+          console.error('Error processing image:', error);
+          // Mark specific image as failed
           setImages(prev => prev.map(img =>
             img.id === image.id
-              ? updatedImage
+              ? { ...img, processedFile: undefined }
               : img
           ));
-          
-          // Save processed image to database
-          await imageStorage.saveImage(image.file, result[0]);
         }
-      } catch (error) {
-        console.error('Error processing image:', error);
       }
+    } catch (error) {
+      console.error('Error in onDrop:', error);
+      setError({
+        message: 'Failed to process images. Please try again.'
+      });
     }
   }, [images.length]);
 
